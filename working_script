@@ -1,0 +1,79 @@
+import pyodbc
+import pandas as pd
+import yagmail
+from datetime import datetime
+import os
+
+# ====== CONFIGURATION =======
+mdb_file_path = [database path] #this will be determined by location of your database
+email_user = "youremail@example.com"
+email_password = "[email password]"  # get this from Gmail App Password if using Gmail
+email_to = "yourrecipient@exampl.com"
+email_cc = ["recipient2@example.com", "recipient3@example..com"]
+
+subject = "Daily Attendance ReportFor ..."
+
+# Absolute paths
+output_dir = r"[Point to your output directory]"
+log_file = os.path.join(output_dir, "attendance_log.txt")
+os.makedirs(output_dir, exist_ok=True)  # Create dir if not exists
+# ============================
+
+# Start logging
+with open(log_file, "a") as log:
+    log.write(f"\n\n[{datetime.now()}] Script started...\n")
+
+    try:
+        # Connect to Access DB using 64-bit driver
+        conn_str = (
+            r"Driver={Microsoft Access Driver (*.mdb, *.accdb)};"
+            f"DBQ={mdb_file_path};"
+        )
+        conn = pyodbc.connect(conn_str)
+        cursor = conn.cursor()
+        log.write(" Connected to database.\n")
+
+        # Get today's date
+        today = datetime.now().strftime('%Y-%m-%d')
+
+        # Query attendance
+        query = f"""
+            SELECT USERINFO.Badgenumber, USERINFO.Name, CHECKINOUT.CheckTime
+            FROM CHECKINOUT
+            INNER JOIN USERINFO ON CHECKINOUT.USERID = USERINFO.USERID
+            WHERE Format(CheckTime, 'yyyy-mm-dd') = '{today}'
+            ORDER BY CheckTime ASC
+        """
+        df = pd.read_sql(query, conn)
+
+        # Save CSV
+        csv_file = os.path.join(output_dir, f"attendance_{today}.csv")
+        df.to_csv(csv_file, index=False)
+        log.write(f" CSV generated: {csv_file} (rows: {len(df)})\n")
+
+        # Email the CSV with CC
+        yag = yagmail.SMTP(user=email_user, password=email_password)
+        body = (
+            f"Attached is the attendance report for [Entity] for {today}.\n"
+            f"NOTE: This is a system auto-generated file. In case of any errors, kindly reply to this email. Thank you."
+        )
+
+        all_recipients = [email_to] + email_cc  # Combine To + CC in one list
+        yag.send(
+            to=all_recipients,
+            subject=subject,
+            contents=body,
+            attachments=csv_file
+        )
+        log.write(" Email sent successfully.\n")
+
+        print(" Attendance emailed successfully.")
+
+        # Cleanup
+        cursor.close()
+        conn.close()
+        log.write(" Database connection closed.\n")
+
+    except Exception as e:
+        log.write(f" Error: {str(e)}\n")
+        print(f" Error occurred: {str(e)}")
